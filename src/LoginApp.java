@@ -5,7 +5,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -318,12 +317,12 @@ public class LoginApp extends JFrame {
             HttpResponse<String> res = post("/webapi/signIn/getSignInList", body, token);
 
             // parse signDay
-            String dataSection = extract(res.body(), "data"); // lấy "data":{...}
-            if (!dataSection.isEmpty() && dataSection.contains("signDay")) {
-                String dayStr = dataSection.substring(dataSection.indexOf("signDay") + 8)
+            String dataSection = extractJsonObject(res.body(), "data");
+            if (dataSection.contains("signDay")) {
+                String dayStr = dataSection.substring(dataSection.indexOf("signDay") + 9)
                         .split("[,}]")[0]
                         .replaceAll("[\" ]", "");
-                return Integer.parseInt(dayStr);
+                return Integer.parseInt(dayStr) + 1;
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -413,6 +412,21 @@ public class LoginApp extends JFrame {
         if (i < 0) return "";
         return json.substring(json.indexOf(":", i) + 1)
                 .split("[,}]")[0].replaceAll("[\" ]", "");
+    }
+
+    private String extractJsonObject(String json, String key) {
+        int i = json.indexOf("\"" + key + "\"");
+        if (i < 0) return "";
+        int start = json.indexOf("{", i);
+        if (start < 0) return "";
+        int end = start;
+        int count = 1; // đếm số ngoặc
+        while (count > 0 && ++end < json.length()) {
+            char c = json.charAt(end);
+            if (c == '{') count++;
+            else if (c == '}') count--;
+        }
+        return json.substring(start, end + 1);
     }
 
     private void loadAccountsFromFile(String filename) {
