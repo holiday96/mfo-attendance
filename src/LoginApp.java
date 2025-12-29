@@ -192,7 +192,10 @@ public class LoginApp extends JFrame {
 
                     // --- SIGNIN ---
                     publish("Signin...", "signin");
-                    doSignin(); // luôn tiếp tục dù đã điểm danh
+                    int dateNo = getSignInDay();
+                    if (dateNo > 0) {
+                        doSignin(dateNo);
+                    }
 
                     // --- TASK ---
                     publish("Get reward...", "task");
@@ -302,7 +305,33 @@ public class LoginApp extends JFrame {
         }
     }
 
-    private boolean doSignin() throws Exception {
+    private int getSignInDay() {
+        try {
+            String body = """
+                    {
+                      "activityName": "signin",
+                      "userId": %s,
+                      "platForm": "web"
+                    }
+                    """.formatted(userId);
+
+            HttpResponse<String> res = post("/webapi/signIn/getSignInList", body, token);
+
+            // parse signDay
+            String dataSection = extract(res.body(), "data"); // lấy "data":{...}
+            if (!dataSection.isEmpty() && dataSection.contains("signDay")) {
+                String dayStr = dataSection.substring(dataSection.indexOf("signDay") + 8)
+                        .split("[,}]")[0]
+                        .replaceAll("[\" ]", "");
+                return Integer.parseInt(dayStr);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return -1; // trả về -1 nếu lỗi
+    }
+
+    private boolean doSignin(int dateNo) throws Exception {
         String body = """
                 {
                   "dateNo": %d,
@@ -310,7 +339,7 @@ public class LoginApp extends JFrame {
                   "platForm":"web",
                   "signInType":1
                 }
-                """.formatted(LocalDate.now().getDayOfMonth(), userId);
+                """.formatted(dateNo, userId);
 
         HttpResponse<String> res = post("/webapi/signIn/doSignin", body, token);
 
@@ -318,7 +347,7 @@ public class LoginApp extends JFrame {
             statusLabel.setText("✅ Điểm danh thành công");
             return true;
         } else if (res.body().contains("\"state\":100007")) {
-            statusLabel.setText("⚠ User đã điểm danh, tiếp tục...");
+            statusLabel.setText("⚠ Ngày " + dateNo + " đã điểm danh, tiếp tục...");
             return true; // vẫn trả về true để tiếp tục doTask()
         } else {
             statusLabel.setText("❌ Lỗi điểm danh");
@@ -343,8 +372,8 @@ public class LoginApp extends JFrame {
                     animateProgress(100, "Hoàn thành", COLOR_SUCCESS);
                     statusLabel.setText("✅ Hoàn thành");
                 } else {
-                    animateProgress(100, "Quà đã nhận", COLOR_TASK);
-                    statusLabel.setText("⚠ Quà đã nhận");
+                    animateProgress(100, "Quà đã nhận, không thể nhận thêm", COLOR_TASK);
+                    statusLabel.setText("⚠ Quà đã nhận, không thể nhận thêm");
                 }
 
                 // Tự động reload captcha nhưng không thay đổi statusLabel
