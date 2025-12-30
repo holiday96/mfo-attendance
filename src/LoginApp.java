@@ -6,6 +6,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.List;
 
 public class LoginApp extends JFrame {
@@ -28,6 +29,8 @@ public class LoginApp extends JFrame {
     private JTextField captchaField = new JTextField();
     private JLabel statusLabel = new JLabel("Ready");
     private JProgressBar progressBar = new JProgressBar(0, 100);
+    private JTextArea logArea = new JTextArea();
+    private JScrollPane logScrollPane;
 
     // animation
     private Timer progressTimer;
@@ -49,7 +52,7 @@ public class LoginApp extends JFrame {
 
     public LoginApp() {
         loadAccountsFromFile("accounts.txt");
-        setTitle("Auto Login Reward - MFO v1.0");
+        setTitle("Auto Login Reward - MFO v1.1");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
 
         // set icon (icon.png cùng thư mục src)
@@ -144,10 +147,25 @@ public class LoginApp extends JFrame {
         bottom.add(progressBar, BorderLayout.CENTER);
         bottom.add(statusLabel, BorderLayout.SOUTH);
 
+        // -------- LOG AREA --------
+        logArea.setEditable(false);
+        logArea.setLineWrap(true);
+        logArea.setWrapStyleWord(true);
+
+        logScrollPane = new JScrollPane(logArea);
+        logScrollPane.setPreferredSize(new Dimension(380, 120));
+        logScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+
+        JPanel logPanelWrapper = new JPanel(new BorderLayout());
+        logPanelWrapper.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+        logPanelWrapper.add(logScrollPane, BorderLayout.CENTER);
+
+        // wrapper panel
         JPanel wrapper = new JPanel(new BorderLayout());
         wrapper.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         wrapper.add(mainPanel, BorderLayout.CENTER);
-        wrapper.add(bottom, BorderLayout.SOUTH);
+        wrapper.add(bottom, BorderLayout.NORTH); // progress + status
+        wrapper.add(logPanelWrapper, BorderLayout.SOUTH); // log
 
         setContentPane(wrapper);
     }
@@ -175,7 +193,9 @@ public class LoginApp extends JFrame {
     // ================= FLOW =================
     private void runWithProgress() {
         animateProgress(0, "Starting...", COLOR_IDLE);
+        appendLog("===================== Starting =====================");
         statusLabel.setText("🔄 Đang xử lý");
+        appendLog("🔄 Đang xử lý");
 
         SwingWorker<Void, String> worker = new SwingWorker<>() {
 
@@ -192,8 +212,9 @@ public class LoginApp extends JFrame {
                     // --- SIGNIN ---
                     publish("Signin...", "signin");
                     int dateNo = getSignInDay();
+                    int type = (dateNo != getTodayDateNo()) ? SignType.BACK : SignType.TODAY;
                     if (dateNo > 0) {
-                        doSignin(dateNo);
+                        doSignin(dateNo, type);
                     }
 
                     // --- TASK ---
@@ -242,10 +263,13 @@ public class LoginApp extends JFrame {
             captchaField.setText("");
 
             if (showStatus) {
-                statusLabel.setText("🖼 Nhập captcha hiển thị bên phải");
+                statusLabel.setText("⌨️ Nhập captcha hiển thị bên phải");
+                appendLog("================== Load captcha ==================");
+                appendLog("⌨️ Nhập captcha hiển thị bên phải");
             }
         } catch (Exception e) {
             statusLabel.setText("❌ Lỗi fetch captcha");
+            appendLog("❌ Lỗi fetch captcha");
             e.printStackTrace();
         }
     }
@@ -256,7 +280,8 @@ public class LoginApp extends JFrame {
         String captcha = captchaField.getText().strip();
 
         if (captcha.isEmpty()) {
-            statusLabel.setText("⚠ Vui lòng nhập captcha");
+            statusLabel.setText("⚠️️️️ Vui lòng nhập captcha");
+            appendLog("⚠️️️ Vui lòng nhập captcha");
             return false;
         }
 
@@ -269,6 +294,7 @@ public class LoginApp extends JFrame {
                   "source":"web"
                 }
                 """.formatted(acc.username, acc.password, captcha);
+        appendLog("🔑 Đang đăng nhập user ➡️ " + acc.username);
 
         try {
             HttpRequest req = HttpRequest.newBuilder()
@@ -281,14 +307,17 @@ public class LoginApp extends JFrame {
 
             if (res.body().contains("\"state\":100002")) {
                 statusLabel.setText("❌ Login fail, mã xác thực sai");
+                appendLog("❌ Login fail, mã xác thực sai");
                 fetchCaptcha(false);
                 return false;
             } else if (res.body().contains("\"state\":500")) {
                 statusLabel.setText("❌ Login fail, Tên người dùng hoặc mật khẩu sai");
+                appendLog("❌ Login fail, Tên người dùng hoặc mật khẩu sai");
                 fetchCaptcha(false);
                 return false;
             } else if (!res.body().contains("\"state\":200")) {
                 statusLabel.setText("❌ Login fail, Lỗi không xác định");
+                appendLog("❌ Login fail, Lỗi không xác định");
                 fetchCaptcha(false);
                 return false;
             }
@@ -298,7 +327,9 @@ public class LoginApp extends JFrame {
 
             return true;
         } catch (Exception e) {
+            fetchCaptcha(false);
             statusLabel.setText("❌ Lỗi login");
+            appendLog("❌ Lỗi login");
             e.printStackTrace();
             return false;
         }
@@ -330,26 +361,41 @@ public class LoginApp extends JFrame {
         return -1; // trả về -1 nếu lỗi
     }
 
-    private boolean doSignin(int dateNo) throws Exception {
+    /**
+     * Hàm điểm danh
+     *
+     * @param dateNo ngày điểm danh
+     * @param type   1 = điểm danh bình thường, 2 = điểm danh bù
+     * @return
+     * @throws Exception
+     */
+    private boolean doSignin(int dateNo, int type) throws Exception {
         String body = """
                 {
                   "dateNo": %d,
                   "userId": %s,
                   "platForm":"web",
-                  "signInType":1
+                  "signInType": %d
                 }
-                """.formatted(dateNo, userId);
+                """.formatted(dateNo, userId, type);
 
         HttpResponse<String> res = post("/webapi/signIn/doSignin", body, token);
 
         if (res.body().contains("\"state\":200")) {
             statusLabel.setText("✅ Điểm danh thành công");
+            appendLog("✅ Điểm danh thành công");
             return true;
-        } else if (res.body().contains("\"state\":100007")) {
-            statusLabel.setText("⚠ Ngày " + dateNo + " đã điểm danh, tiếp tục...");
+        } else if (res.body().contains("\"state\":100024")) {
+            statusLabel.setText("⚠️ Ngày " + (dateNo - 1) + " đã điểm danh bù, tiếp tục...");
+            appendLog("⚠️ Ngày " + (dateNo - 1) + " đã điểm danh bù, tiếp tục...");
+            return true; // vẫn trả về true để tiếp tục doTask()
+        } else if (res.body().contains("\"state\":10002") || res.body().contains("\"state\":100007")) {
+            statusLabel.setText("⚠️ Ngày " + (dateNo - 1) + " đã điểm danh, tiếp tục...");
+            appendLog("⚠️ Ngày " + (dateNo - 1) + " đã điểm danh, tiếp tục...");
             return true; // vẫn trả về true để tiếp tục doTask()
         } else {
             statusLabel.setText("❌ Lỗi điểm danh");
+            appendLog("❌ Lỗi điểm danh");
             return false;
         }
     }
@@ -370,9 +416,11 @@ public class LoginApp extends JFrame {
                 if (res.body().contains("\"state\":200")) {
                     animateProgress(100, "Hoàn thành", COLOR_SUCCESS);
                     statusLabel.setText("✅ Hoàn thành");
+                    appendLog("✅ Hoàn thành");
                 } else {
                     animateProgress(100, "Quà đã nhận, không thể nhận thêm", COLOR_TASK);
-                    statusLabel.setText("⚠ Quà đã nhận, không thể nhận thêm");
+                    statusLabel.setText("⚠️ Quà đã nhận, không thể nhận thêm");
+                    appendLog("⚠️ Quà đã nhận, không thể nhận thêm");
                 }
 
                 // Tự động reload captcha nhưng không thay đổi statusLabel
@@ -383,6 +431,7 @@ public class LoginApp extends JFrame {
             SwingUtilities.invokeLater(() -> {
                 animateProgress(100, "Lỗi", COLOR_ERROR);
                 statusLabel.setText("❌ Lỗi nhận quà");
+                appendLog("❌ Lỗi nhận quà");
                 fetchCaptcha(false);
             });
             e.printStackTrace();
@@ -446,6 +495,19 @@ public class LoginApp extends JFrame {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this, "Không thể load account từ file: " + e.getMessage());
         }
+    }
+
+    // Hàm lấy số ngày hôm nay (1-31)
+    private int getTodayDateNo() {
+        Calendar cal = Calendar.getInstance();
+        return cal.get(Calendar.DAY_OF_MONTH);
+    }
+
+    private void appendLog(String message) {
+        SwingUtilities.invokeLater(() -> {
+            logArea.append(message + "\n");
+            logArea.setCaretPosition(logArea.getDocument().getLength());
+        });
     }
 
     // ================= CUSTOM UI =================
