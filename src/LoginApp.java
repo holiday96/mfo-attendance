@@ -52,13 +52,12 @@ public class LoginApp extends JFrame {
 
     public LoginApp() {
         loadAccountsFromFile("accounts.txt");
-        setTitle("Auto Login Reward - MFO v1.1");
+        setTitle("Auto Login Reward - MFO v1.2");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
 
         // set icon (icon.png cùng thư mục src)
         try {
-            Image icon = Toolkit.getDefaultToolkit()
-                    .getImage(LoginApp.class.getResource("/icon.png"));
+            Image icon = Toolkit.getDefaultToolkit().getImage(LoginApp.class.getResource("/icon.png"));
             setIconImage(icon);
         } catch (Exception ignored) {
         }
@@ -176,8 +175,7 @@ public class LoginApp extends JFrame {
         progressBar.setString(text);
         progressBar.setForeground(color);
 
-        if (progressTimer != null && progressTimer.isRunning())
-            progressTimer.stop();
+        if (progressTimer != null && progressTimer.isRunning()) progressTimer.stop();
 
         progressTimer = new Timer(10, e -> {
             if (currentValue < targetValue) currentValue += 1;
@@ -211,14 +209,37 @@ public class LoginApp extends JFrame {
 
                     // --- SIGNIN ---
                     publish("Signin...", "signin");
+
                     int dateNo = getSignInDay();
-                    int type = (dateNo != getTodayDateNo()) ? SignType.BACK : SignType.TODAY;
+                    int today = getTodayDateNo();
+                    int lastDay = getLastDayOfMonth();
+
+                    int type = (dateNo != today) ? SignType.BACK : SignType.TODAY;
+
                     if (dateNo > 0) {
-                        doSignin(dateNo, type);
+                        boolean signinOk = doSignin(dateNo, type);
+
+                        if (signinOk) {
+                            // VỪA ĐỦ NGÀY → NHẬN FULL PRIZE
+                            if (dateNo == lastDay) {
+                                publish("Get full month prize...", "task");
+                                getFullPrize();
+
+                            }
+                            // ĐÃ VƯỢT NGÀY CUỐI THÁNG → COI NHƯ ĐÃ NHẬN
+                            else if (dateNo > lastDay) {
+                                appendLog("⚠️ Thưởng đủ ngày tháng này đã nhận rồi");
+                                statusLabel.setText("⚠️ Đã nhận thưởng đủ ngày tháng");
+                            }
+                            // CHƯA ĐỦ NGÀY
+                            else {
+                                appendLog("ℹ️ Chưa đủ ngày (" + (dateNo - 1) + "/" + lastDay + "), bỏ qua full prize");
+                            }
+                        }
                     }
 
-                    // --- TASK ---
-                    publish("Get reward...", "task");
+                    // --- TASK NGÀY ---
+                    publish("Get daily task prize...", "task");
                     doTask();
 
                 } catch (Exception e) {
@@ -246,17 +267,12 @@ public class LoginApp extends JFrame {
 
     // ================= API =================
     // ================= HTTP CLIENT CHUNG =================
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .cookieHandler(new java.net.CookieManager())
-            .build();
+    private final HttpClient httpClient = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
 
     // ================= CAPTCHA =================
     private void fetchCaptcha(boolean showStatus) {
         try {
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(BASE_URL + "/webapi/login/getCaptcha"))
-                    .GET()
-                    .build();
+            HttpRequest req = HttpRequest.newBuilder().uri(URI.create(BASE_URL + "/webapi/login/getCaptcha")).GET().build();
 
             HttpResponse<byte[]> res = httpClient.send(req, HttpResponse.BodyHandlers.ofByteArray());
             captchaLabel.setIcon(new ImageIcon(res.body()));
@@ -297,11 +313,7 @@ public class LoginApp extends JFrame {
         appendLog("🔑 Đang đăng nhập user ➡️ " + acc.username);
 
         try {
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(BASE_URL + "/webapi/login/doLogin"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
+            HttpRequest req = HttpRequest.newBuilder().uri(URI.create(BASE_URL + "/webapi/login/doLogin")).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build();
 
             HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
 
@@ -350,9 +362,7 @@ public class LoginApp extends JFrame {
             // parse signDay
             String dataSection = extractJsonObject(res.body(), "data");
             if (dataSection.contains("signDay")) {
-                String dayStr = dataSection.substring(dataSection.indexOf("signDay") + 9)
-                        .split("[,}]")[0]
-                        .replaceAll("[\" ]", "");
+                String dayStr = dataSection.substring(dataSection.indexOf("signDay") + 9).split("[,}]")[0].replaceAll("[\" ]", "");
                 return Integer.parseInt(dayStr) + 1;
             }
         } catch (Exception e) {
@@ -377,7 +387,7 @@ public class LoginApp extends JFrame {
                   "platForm":"web",
                   "signInType": %d
                 }
-                """.formatted(dateNo, userId, type);
+                """.formatted(dateNo > getLastDayOfMonth() ? dateNo - 1 : dateNo, userId, type);
 
         HttpResponse<String> res = post("/webapi/signIn/doSignin", body, token);
 
@@ -416,6 +426,7 @@ public class LoginApp extends JFrame {
                 if (res.body().contains("\"state\":200")) {
                     animateProgress(100, "Hoàn thành", COLOR_SUCCESS);
                     statusLabel.setText("✅ Hoàn thành");
+                    appendLog("💎 Nhận kim cương thành công");
                     appendLog("✅ Hoàn thành");
                 } else {
                     animateProgress(100, "Quà đã nhận, không thể nhận thêm", COLOR_TASK);
@@ -426,7 +437,6 @@ public class LoginApp extends JFrame {
                 // Tự động reload captcha nhưng không thay đổi statusLabel
                 fetchCaptcha(false);
             });
-
         } catch (Exception e) {
             SwingUtilities.invokeLater(() -> {
                 animateProgress(100, "Lỗi", COLOR_ERROR);
@@ -438,16 +448,46 @@ public class LoginApp extends JFrame {
         }
     }
 
+    /**
+     * Nhận thưởng đủ ngày trong tháng
+     */
+    private boolean getFullPrize() {
+        try {
+            // yyyyMM
+            Calendar cal = Calendar.getInstance();
+            String month = String.format("%04d%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1);
+
+            String body = """
+                    {
+                      "month":"%s",
+                      "platForm":"web",
+                      "userId":%s
+                    }
+                    """.formatted(month, userId);
+
+            HttpResponse<String> res = post("/webapi/signIn/getfullPrize", body, token);
+
+            if (res.body().contains("\"state\":200")) {
+                appendLog("🎁 Nhận thưởng đủ ngày thành công (" + month + ")");
+                statusLabel.setText("🎁 Đã nhận thưởng đủ ngày");
+                return true;
+            } else {
+                appendLog("⚠️ Không thể nhận thưởng đủ ngày");
+                return false;
+            }
+        } catch (Exception e) {
+            appendLog("❌ Lỗi getfullPrize");
+            e.printStackTrace();
+            return false;
+        }
+    }
+
     private HttpResponse<String> post(String path, String body, String token) throws Exception {
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(BASE_URL + path))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body));
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(BASE_URL + path)).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body));
 
         if (token != null) builder.header("token", token);
 
-        return HttpClient.newHttpClient()
-                .send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        return HttpClient.newHttpClient().send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private Account getSelectedAccount() {
@@ -459,8 +499,7 @@ public class LoginApp extends JFrame {
     private String extract(String json, String key) {
         int i = json.indexOf(key);
         if (i < 0) return "";
-        return json.substring(json.indexOf(":", i) + 1)
-                .split("[,}]")[0].replaceAll("[\" ]", "");
+        return json.substring(json.indexOf(":", i) + 1).split("[,}]")[0].replaceAll("[\" ]", "");
     }
 
     private String extractJsonObject(String json, String key) {
@@ -497,10 +536,20 @@ public class LoginApp extends JFrame {
         }
     }
 
-    // Hàm lấy số ngày hôm nay (1-31)
+    /**
+     * Hàm lấy số ngày hôm nay (1-31)
+     */
     private int getTodayDateNo() {
         Calendar cal = Calendar.getInstance();
         return cal.get(Calendar.DAY_OF_MONTH);
+    }
+
+    /**
+     * Lấy ngày cuối cùng của tháng hiện tại
+     */
+    private int getLastDayOfMonth() {
+        Calendar cal = Calendar.getInstance();
+        return cal.getActualMaximum(Calendar.DAY_OF_MONTH);
     }
 
     private void appendLog(String message) {
@@ -526,17 +575,13 @@ public class LoginApp extends JFrame {
             g2.fillRoundRect(0, 0, w, h, h, h);
 
             Color base = progressBar.getForeground();
-            GradientPaint gp = new GradientPaint(
-                    0, 0, base.brighter(),
-                    w, 0, base.darker()
-            );
+            GradientPaint gp = new GradientPaint(0, 0, base.brighter(), w, 0, base.darker());
 
             g2.setPaint(gp);
             g2.fillRoundRect(0, 0, fill, h, h, h);
             g2.dispose();
 
-            if (progressBar.isStringPainted())
-                paintString(g, i.left, i.top, w, h, fill, i);
+            if (progressBar.isStringPainted()) paintString(g, i.left, i.top, w, h, fill, i);
         }
     }
 }
